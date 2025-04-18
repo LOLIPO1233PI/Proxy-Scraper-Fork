@@ -1,75 +1,58 @@
-import requests
 import time
-from termcolor import colored
-
-timeout = "3000"
-url = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=20000"
-url2 = "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"
-
-
-headers = {
-    "accept": "text/plain, */*; q=0.01",
-    "accept-language": "en-US,en;q=0.8",
-    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-}
-
-response = requests.request(
-    "GET", url, headers=headers
-)
-response2 = requests.request("GET", url2, headers=headers)
-print(response.text)
-print(response2.text)
-proxies = []
-proxies.extend(response.text.split("\n"))
-proxies.extend(response2.text.split("\n"))
-
-proxies = list(set(filter(None, proxies)))
-print("Amount of proxies after removing duplicates:", len(proxies))
-time.sleep(3)
-
-
-import urllib.request, socket
-
-socket.setdefaulttimeout(3)
-
-
-def is_bad_proxy(pip):
-    try:
-        proxy_handler = urllib.request.ProxyHandler({"http": pip})
-        opener = urllib.request.build_opener(proxy_handler)
-        opener.addheaders = [("User-agent", "Mozilla/5.0")]
-        urllib.request.install_opener(opener)
-        sock = urllib.request.urlopen("http://api.ipify.org/")
-    except urllib.error.HTTPError as e:
-        return e.code
-    except Exception as detail:
-        return 1
-    return 0
-
-
 import concurrent.futures
-
-working = []
-badcount = 0
-workingcount = 0
-
-def check_proxy(proxy):
-    global badcount, workingcount
-    if is_bad_proxy(proxy):
-        badcount += 1
-        print(colored(f"{badcount} bad proxies", "red"))
-    else:
-        workingcount += 1
-        print(colored(f"{workingcount} working proxies", "green"))
-        working.append(proxy + "\n")
+import requests
 
 
+# This is a bare version of the original code
+# https://github.com/berkay-digital/Proxy-Scraper
+# The original code is licensed under the MIT License
+#
+class ProxyScraper:
+    def __init__(self, proxy_list: list[str]):
+        self.proxy_list = set(proxy_list)
+        self.working_proxies: list[str] = []
 
-start_time = time.time()
+    def is_bad_proxy(self, pip):
+        try:
+            _ = requests.get(
+                "http://api.ipify.org/",
+                proxies={"http": f"http://{pip}", "https": f"https://{pip}"},
+                timeout=5,
+            )
+            _.raise_for_status()
+        except requests.HTTPError:
+            print(f"HTTP Error: {pip}")
+            return True
+        return False
 
-with concurrent.futures.ThreadPoolExecutor() as executor:
-    executor.map(check_proxy, proxies)
-end_time = time.time()
-print("Time taken: ", end_time - start_time, "seconds")
-with open("proxies.txt", "w") as f:
-    f.writelines(working)
+    def check_proxy(self, proxy):
+        if self.is_bad_proxy(proxy):
+            print(f"Bad proxy: {proxy}")
+            return
+        self.working_proxies.append(proxy)
+
+    def out_proxies(self, output_file: str = "proxies.txt"):
+        start_time = time.time()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            executor.map(self.check_proxy, self.proxy_list)
+        end_time = time.time()
+        print(">> Time taken: ", end_time - start_time, "seconds")
+        try:
+            with open(output_file, "a") as f:
+                f.write("\n".join(self.working_proxies))
+            print(f"Working proxies saved to {output_file}")
+        except (IOError, OSError) as e:
+            print(f"Error writing to file: {e}")
+
+    def update_proxies(self, url: str):
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            self.proxy_list = response.text.splitlines()
+            print("Proxies updated successfully.")
+        except requests.HTTPError as e:
+            print(f"Error updating proxies: {e}")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+
